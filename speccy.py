@@ -15,6 +15,10 @@ from datetime import datetime
 import os
 import cPickle
 
+import json
+import subprocess
+import requests
+
 
 class Speccy(object):
     heatmap = {}
@@ -52,6 +56,8 @@ class Speccy(object):
     freq_max = None
     last_x = None
 
+    channel_info = {}
+
     def set_band(self, band_idx):
         band = self.bands[band_idx]
         self.freq_min = band[0] - 10.0
@@ -83,6 +89,23 @@ class Speccy(object):
         self.ui_update = True
         self.bg_sample_count = 0
         self.bg_sample_count_limit = 500
+
+        self.channel_info = {
+        2412:{'c':1, 'pwr':-127, 'noise':-127, 'rssi':-127},
+        2417:{'c':2, 'pwr':-127, 'noise':-127, 'rssi':-127},
+        2422:{'c':3, 'pwr':-127, 'noise':-127, 'rssi':-127},
+        2427:{'c':4, 'pwr':-127, 'noise':-127, 'rssi':-127}, 
+        2432:{'c':5, 'pwr':-127, 'noise':-127, 'rssi':-127},
+        2437:{'c':6, 'pwr':-127, 'noise':-127, 'rssi':-127},
+        2442:{'c':7, 'pwr':-127, 'noise':-127, 'rssi':-127},
+        2447:{'c':8, 'pwr':-127, 'noise':-127, 'rssi':-127},
+        2452:{'c':9, 'pwr':-127, 'noise':-127, 'rssi':-127},
+        2457:{'c':10, 'pwr':-127, 'noise':-127, 'rssi':-127},
+        2462:{'c':11, 'pwr':-127, 'noise':-127, 'rssi':-127}
+        }
+
+        self.ap1 = 2412
+        self.ap2 = 2437
 
     def quit(self, *args):
         Gtk.main_quit()
@@ -262,6 +285,7 @@ class Speccy(object):
 
         hmp = self.heatmap
         mpf = self.max_per_freq
+        diff = False
 
         for scanner in self.scanners:
             if scanner.file_reader.sample_queue.empty():
@@ -274,7 +298,14 @@ class Speccy(object):
             if not self.ui_update:
                 continue
 
+               # sigval = noise + rssi + 20 * math.log10(sample) - sumsq_sample
+
             for (tsf, freq_cf, noise, rssi, pwr) in SpectrumFileReader.decode(xydata):
+                # if (freq_cf == self.ap1 or freq_cf == self.ap2) \
+                #     and freq_cf in self.channel_info:
+                #     temp_signal = self.channel_info[freq_cf]['pwr']
+            	# print(freq_cf)
+            	# print(pwr)
                 if scanner.mode.value == 1 and freq_cf < self.last_x:  # chanscan
                     # we wrapped the scan...
                     self.hmp_gen += 1
@@ -302,7 +333,33 @@ class Speccy(object):
                         mpf[freq_sc] = sigval
                         self.mpf_gen_tbl[freq_sc] = self.mpf_gen
 
+                        # if freq_cf in self.channel_info:
+                        #     temp_signal = sigval
+
+                if (freq_cf == self.ap1 or freq_cf == self.ap2) \
+                    and freq_cf in self.channel_info:
+                    change = abs((self.channel_info[freq_cf]['pwr'] - sigval) / self.channel_info[freq_cf]['pwr']) *100
+                    # print(change)
+                    if change >= 10:
+                        diff = True
+                        self.channel_info[freq_cf]['pwr'] = sigval
+                        self.channel_info[freq_cf]['noise'] = noise
+                        self.channel_info[freq_cf]['rssi'] = rssi
+
                 self.last_x = freq_cf
+
+            #for k,v in self.channel_info.iteritems():
+            #    print(k, v)
+        if diff:
+            print("======= sending")
+            snr = {"version":1.0, "params":{"snr":{"lvap":"18:5E:0F:E3:B8:45", "info":self.channel_info}}}
+            jsondata = json.dumps(snr)
+            #print(jsondata)
+            #requests.put('http://foo:foo@192.168.0.140:8888/api/v1/tenants/a34f0d19-8d37-453e-8c25-3902ba1fa7a8/components/empower.apps.mcast.mcasttub', json=jsondata)
+            subprocess.Popen("curl -X PUT -d '%s' 'http://foo:foo@192.168.0.123:8888/api/v1/tenants/3e2056dd-b711-42fd-8b35-349d99d58149/components/empower.apps.mcast.mcasttub' " % jsondata, shell=True, stdout=subprocess.PIPE)
+
+        #answ = requests.get('http://foo:foo@192.168.0.140:8888/api/v1/tenants/a34f0d19-8d37-453e-8c25-3902ba1fa7a8/components/empower.apps.mcast.mcasttub').json()
+        #print(answ)
 
         if not self.ui_update:
             return True
